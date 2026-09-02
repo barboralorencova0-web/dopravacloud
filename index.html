@@ -172,15 +172,220 @@
             font-weight: bold;
             display: inline-block;
         }
+        #loadingOverlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 2000;
+            color: #fff;
+            justify-content: center;
+            align-items: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
     </style>
+
+    <!-- Firebase SDK skripty a logika -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA2WqVhfOybOoJmTzhWnJ5XXAD_lqcduNA",
+            authDomain: "dopravni-galerie-3887d.firebaseapp.com",
+            projectId: "dopravni-galerie-3887d",
+            storageBucket: "dopravni-galerie-3887d.firebasestorage.app",
+            messagingSenderId: "638387012437",
+            appId: "1:638387012437:web:3deda6a2e343828b8c65dc",
+            measurementId: "G-ET7VKN2XNL"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        const categoriesConfig = [
+            { name: 'Autobusy', emoji: '🚌' },
+            { name: 'Tramvaje', emoji: '🚋' },
+            { name: 'Vlaky', emoji: '🚂' },
+            { name: 'Trolejbusy', emoji: '🚎' },
+            { name: 'Letadla', emoji: '✈️' },
+            { name: 'Ostatní', emoji: '🏢' }
+        ];
+
+        let photos = [];
+
+        window.openModal = function() {
+            document.getElementById('addModal').style.display = 'flex';
+        }
+
+        window.closeModal = function() {
+            document.getElementById('addModal').style.display = 'none';
+        }
+
+        window.viewPhoto = function(src) {
+            document.getElementById('fullImage').src = src;
+            document.getElementById('downloadBtn').href = src;
+            document.getElementById('viewerModal').style.display = 'flex';
+        }
+
+        window.closeViewer = function(e) {
+            document.getElementById('viewerModal').style.display = 'none';
+        }
+
+        window.savePhoto = async function() {
+            const fileInput = document.getElementById('imageInput');
+            const category = document.getElementById('categoryInput').value;
+            const evNumber = document.getElementById('evNumberInput').value;
+            const vehicleType = document.getElementById('typeInput').value;
+            const location = document.getElementById('locationInput').value;
+            const photoDate = document.getElementById('dateInput').value;
+            const info = document.getElementById('infoInput').value;
+
+            if (fileInput.files.length === 0) {
+                alert('Vyber prosím fotku.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            document.getElementById('loadingOverlay').style.display = 'flex';
+
+            try {
+                // Nahrání fotky v plné kvalitě do Firebase Storage
+                const filePath = `photos/${Date.now()}_${file.name}`;
+                const storageRef = ref(storage, filePath);
+                await uploadBytes(storageRef, file);
+                const downloadURL = await getDownloadURL(storageRef);
+
+                // Uložení informací do Firestore databáze
+                await addDoc(collection(db, "photos"), {
+                    src: downloadURL,
+                    storagePath: filePath,
+                    category: category,
+                    evNumber: evNumber,
+                    vehicleType: vehicleType,
+                    location: location,
+                    photoDate: photoDate,
+                    info: info,
+                    createdAt: Date.now()
+                });
+
+                closeModal();
+                fileInput.value = '';
+                document.getElementById('evNumberInput').value = '';
+                document.getElementById('typeInput').value = '';
+                document.getElementById('locationInput').value = '';
+                document.getElementById('dateInput').value = '';
+                document.getElementById('infoInput').value = '';
+
+                await loadPhotos();
+            } catch (error) {
+                console.error("Chyba při ukládání: ", error);
+                alert("Při ukládání došlo k chybě. Zkus to prosím znovu.");
+            } finally {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        window.deletePhoto = async function(id, storagePath) {
+            if (!confirm("Opravdu chceš tuto fotku smazat?")) return;
+            document.getElementById('loadingOverlay').style.display = 'flex';
+
+            try {
+                await deleteDoc(doc(db, "photos", id));
+
+                if (storagePath) {
+                    const photoRef = ref(storage, storagePath);
+                    await deleteObject(photoRef).catch(err => console.log("Soubor ve storage nenalezen", err));
+                }
+
+                await loadPhotos();
+            } catch (error) {
+                console.error("Chyba při mazání: ", error);
+                alert("Nepodařilo se smazat.");
+            } finally {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        window.renderGallery = function() {
+            const container = document.getElementById('categoriesContainer');
+            const searchText = document.getElementById('searchInput').value.toLowerCase();
+            container.innerHTML = '';
+
+            categoriesConfig.forEach(cat => {
+                const catPhotos = photos.filter(p => {
+                    const matchCategory = p.category === cat.name;
+                    const fullText = `${p.evNumber || ''} ${p.vehicleType || ''} ${p.location || ''} ${p.photoDate || ''} ${p.info || ''}`.toLowerCase();
+                    const matchSearch = fullText.includes(searchText) || searchText === '';
+                    return matchCategory && matchSearch;
+                });
+
+                if (catPhotos.length > 0 || searchText === '') {
+                    const section = document.createElement('div');
+                    section.className = 'category-section';
+
+                    let photosHtml = '';
+                    catPhotos.forEach(photo => {
+                        photosHtml += `
+                            <div class="photo-card">
+                                <img src="${photo.src}" alt="${photo.category}" onclick="viewPhoto('${photo.src}')">
+                                <div class="photo-info">
+                                    ${photo.evNumber ? `<strong>Ev. č. ${photo.evNumber}</strong>` : ''}
+                                    ${photo.vehicleType ? `<span>${photo.vehicleType}</span>` : ''}
+                                    ${photo.location ? `<span style="color: #999;">📍 ${photo.location}</span>` : ''}
+                                    ${photo.photoDate ? `<span style="color: #aaa; font-size: 11px;">📅 ${photo.photoDate}</span>` : ''}
+                                    ${photo.info ? `<span style="color: #00FFFF; font-size: 11px;">💡 ${photo.info}</span>` : ''}
+                                </div>
+                                <button class="delete-btn" onclick="deletePhoto('${photo.id}', '${photo.storagePath || ''}')" title="Smazat">×</button>
+                            </div>
+                        `;
+                    });
+
+                    if (catPhotos.length === 0) {
+                        photosHtml = '<p style="color: #555; font-size: 14px; margin: 0; grid-column: 1/-1;">Zatím žádné fotky</p>';
+                    }
+
+                    section.innerHTML = `
+                        <div class="category-title">${cat.emoji} ${cat.name}</div>
+                        <div class="category-grid">${photosHtml}</div>
+                    `;
+                    container.appendChild(section);
+                }
+            });
+        }
+
+        async function loadPhotos() {
+            try {
+                const q = query(collection(db, "photos"), orderBy("createdAt", "desc"));
+                const querySnapshot = await getDocs(q);
+                photos = [];
+                querySnapshot.forEach((docSnap) => {
+                    photos.push({ id: docSnap.id, ...docSnap.data() });
+                });
+                renderGallery();
+            } catch (error) {
+                console.error("Chyba při načítání dat: ", error);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadPhotos();
+            document.getElementById('searchInput').addEventListener('input', renderGallery);
+        });
+    </script>
 </head>
 <body>
+
+    <div id="loadingOverlay">Nahrávám do cloudu...</div>
 
     <h1>(Nejen) dopravní galerie</h1>
 
     <div class="top-bar">
         <button class="btn-add" onclick="openModal()">+ přidej fotku</button>
-        <input type="text" id="searchInput" class="search-input" placeholder="🔍 vyhledej..." oninput="renderGallery()">
+        <input type="text" id="searchInput" class="search-input" placeholder="🔍 vyhledej...">
     </div>
 
     <div id="categoriesContainer"></div>
@@ -189,7 +394,7 @@
     <div class="modal" id="addModal">
         <div class="modal-content">
             <h3 style="margin: 0 0 5px 0;">Nová fotka</h3>
-            <label style="font-size: 12px; color: #aaa;">Vybrat fotku:</label>
+            <label style="font-size: 12px; color: #aaa;">Vybrat fotku v plné kvalitě:</label>
             <input type="file" id="imageInput" accept="image/*">
             
             <label style="font-size: 12px; color: #aaa;">Kategorie:</label>
@@ -224,159 +429,5 @@
         </div>
     </div>
 
-    <script>
-        const categoriesConfig = [
-            { name: 'Autobusy', emoji: '🚌' },
-            { name: 'Tramvaje', emoji: '🚋' },
-            { name: 'Vlaky', emoji: '🚂' },
-            { name: 'Trolejbusy', emoji: '🚎' },
-            { name: 'Letadla', emoji: '✈️' },
-            { name: 'Ostatní', emoji: '🏢' }
-        ];
-
-        let photos = JSON.parse(localStorage.getItem('transport_gallery_v6')) || [];
-
-        function openModal() {
-            document.getElementById('addModal').style.display = 'flex';
-        }
-
-        function closeModal() {
-            document.getElementById('addModal').style.display = 'none';
-        }
-
-        function viewPhoto(src) {
-            document.getElementById('fullImage').src = src;
-            document.getElementById('downloadBtn').href = src;
-            document.getElementById('viewerModal').style.display = 'flex';
-        }
-
-        function closeViewer(e) {
-            document.getElementById('viewerModal').style.display = 'none';
-        }
-
-        function savePhoto() {
-            const fileInput = document.getElementById('imageInput');
-            const category = document.getElementById('categoryInput').value;
-            const evNumber = document.getElementById('evNumberInput').value;
-            const vehicleType = document.getElementById('typeInput').value;
-            const location = document.getElementById('locationInput').value;
-            const photoDate = document.getElementById('dateInput').value;
-            const info = document.getElementById('infoInput').value;
-
-            if (fileInput.files.length === 0) {
-                alert('Vyber prosím fotku.');
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const img = new Image();
-                img.src = e.target.result;
-                img.onload = function() {
-                    const canvas = document.createElement('canvas');
-                    const MAX_SIZE = 1000; // Bezpečný rozměr pro paměť prohlížeče
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (width > height) {
-                        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-                    } else {
-                        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
-                    }
-
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    
-                    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
-
-                    const newPhoto = {
-                        id: Date.now(),
-                        src: compressedDataUrl,
-                        category: category,
-                        evNumber: evNumber,
-                        vehicleType: vehicleType,
-                        location: location,
-                        photoDate: photoDate,
-                        info: info
-                    };
-
-                    photos.push(newPhoto);
-                    try {
-                        localStorage.setItem('transport_gallery_v6', JSON.stringify(photos));
-                        closeModal();
-                        renderGallery();
-                        
-                        // Reset formuláře
-                        fileInput.value = '';
-                        document.getElementById('evNumberInput').value = '';
-                        document.getElementById('typeInput').value = '';
-                        document.getElementById('locationInput').value = '';
-                        document.getElementById('dateInput').value = '';
-                        document.getElementById('infoInput').value = '';
-                    } catch (err) {
-                        alert('Paměť prohlížeče je plná! Zkus smazat některé starší fotky.');
-                    }
-                };
-            };
-            reader.readAsDataURL(fileInput.files[0]);
-        }
-
-        function deletePhoto(id) {
-            photos = photos.filter(photo => photo.id !== id);
-            localStorage.setItem('transport_gallery_v6', JSON.stringify(photos));
-            renderGallery();
-        }
-
-        function renderGallery() {
-            const container = document.getElementById('categoriesContainer');
-            const searchText = document.getElementById('searchInput').value.toLowerCase();
-            container.innerHTML = '';
-
-            categoriesConfig.forEach(cat => {
-                const catPhotos = photos.filter(p => {
-                    const matchCategory = p.category === cat.name;
-                    const fullText = `${p.evNumber} ${p.vehicleType} ${p.location} ${p.photoDate} ${p.info}`.toLowerCase();
-                    const matchSearch = fullText.includes(searchText) || searchText === '';
-                    return matchCategory && matchSearch;
-                });
-
-                if (catPhotos.length > 0 || searchText === '') {
-                    const section = document.createElement('div');
-                    section.className = 'category-section';
-
-                    let photosHtml = '';
-                    catPhotos.forEach(photo => {
-                        photosHtml += `
-                            <div class="photo-card">
-                                <img src="${photo.src}" alt="${photo.category}" onclick="viewPhoto('${photo.src}')">
-                                <div class="photo-info">
-                                    ${photo.evNumber ? `<strong>Ev. č. ${photo.evNumber}</strong>` : ''}
-                                    ${photo.vehicleType ? `<span>${photo.vehicleType}</span>` : ''}
-                                    ${photo.location ? `<span style="color: #999;">📍 ${photo.location}</span>` : ''}
-                                    ${photo.photoDate ? `<span style="color: #aaa; font-size: 11px;">📅 ${photo.photoDate}</span>` : ''}
-                                    ${photo.info ? `<span style="color: #00FFFF; font-size: 11px;">💡 ${photo.info}</span>` : ''}
-                                </div>
-                                <button class="delete-btn" onclick="deletePhoto(${photo.id})" title="Smazat">×</button>
-                            </div>
-                        `;
-                    });
-
-                    if (catPhotos.length === 0) {
-                        photosHtml = '<p style="color: #555; font-size: 14px; margin: 0; grid-column: 1/-1;">Zatím žádné fotky</p>';
-                    }
-
-                    section.innerHTML = `
-                        <div class="category-title">${cat.emoji} ${cat.name}</div>
-                        <div class="category-grid">${photosHtml}</div>
-                    `;
-                    container.appendChild(section);
-                }
-            });
-        }
-
-        renderGallery();
-    </script>
 </body>
 </html>
