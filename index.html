@@ -186,25 +186,22 @@
         }
     </style>
 
-    <!-- Firebase SDK skripty a logika -->
+    <!-- Firebase SDK (pouze Firestore databáze, která je zdarma) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         const firebaseConfig = {
-            apiKey: "AIzaSyA2WqVhfOybOoJmTzhWnJ5XXAD_lqcduNA",
-            authDomain: "dopravni-galerie-3887d.firebaseapp.com",
-            projectId: "dopravni-galerie-3887d",
-            storageBucket: "dopravni-galerie-3887d.firebasestorage.app",
-            messagingSenderId: "638387012437",
-            appId: "1:638387012437:web:3deda6a2e343828b8c65dc",
-            measurementId: "G-ET7VKN2XNL"
+            apiKey: "AIzaSyCJb9o0ydoxgx4FeDeZKfw3is0_N_nMato",
+            authDomain: "nejen-dopravni-galerie.firebaseapp.com",
+            projectId: "nejen-dopravni-galerie",
+            storageBucket: "nejen-dopravni-galerie.firebasestorage.app",
+            messagingSenderId: "334907291884",
+            appId: "1:334907291884:web:402717465d1b5c7de5cdc9"
         };
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        const storage = getStorage(app);
 
         const categoriesConfig = [
             { name: 'Autobusy', emoji: '🚌' },
@@ -235,6 +232,38 @@
             document.getElementById('viewerModal').style.display = 'none';
         }
 
+        // Pomocná funkce pro kompresi fotky v prohlížeči (zcela zdarma)
+        function compressImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width;
+                        let height = img.height;
+                        const maxDim = 1200; // Maximální rozměr pro uložení do databáze
+
+                        if (width > height && width > maxDim) {
+                            height = Math.round((height * maxDim) / width);
+                            width = maxDim;
+                        } else if (height > maxDim) {
+                            width = Math.round((width * maxDim) / height);
+                            height = maxDim;
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.8)); // Převedení na zkomprimovaný Base64 text
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
         window.savePhoto = async function() {
             const fileInput = document.getElementById('imageInput');
             const category = document.getElementById('categoryInput').value;
@@ -249,20 +278,15 @@
                 return;
             }
 
-            const file = fileInput.files[0];
             document.getElementById('loadingOverlay').style.display = 'flex';
 
             try {
-                // Nahrání fotky v plné kvalitě do Firebase Storage
-                const filePath = `photos/${Date.now()}_${file.name}`;
-                const storageRef = ref(storage, filePath);
-                await uploadBytes(storageRef, file);
-                const downloadURL = await getDownloadURL(storageRef);
+                // Zmenšení fotky a převedení do textu přímo v prohlížeči
+                const compressedDataUrl = await compressImage(fileInput.files[0]);
 
-                // Uložení informací do Firestore databáze
+                // Uložení textových dat do Firestore databáze (zcela zdarma, bez Storage)
                 await addDoc(collection(db, "photos"), {
-                    src: downloadURL,
-                    storagePath: filePath,
+                    src: compressedDataUrl,
                     category: category,
                     evNumber: evNumber,
                     vehicleType: vehicleType,
@@ -289,18 +313,12 @@
             }
         }
 
-        window.deletePhoto = async function(id, storagePath) {
+        window.deletePhoto = async function(id) {
             if (!confirm("Opravdu chceš tuto fotku smazat?")) return;
             document.getElementById('loadingOverlay').style.display = 'flex';
 
             try {
                 await deleteDoc(doc(db, "photos", id));
-
-                if (storagePath) {
-                    const photoRef = ref(storage, storagePath);
-                    await deleteObject(photoRef).catch(err => console.log("Soubor ve storage nenalezen", err));
-                }
-
                 await loadPhotos();
             } catch (error) {
                 console.error("Chyba při mazání: ", error);
@@ -339,7 +357,7 @@
                                     ${photo.photoDate ? `<span style="color: #aaa; font-size: 11px;">📅 ${photo.photoDate}</span>` : ''}
                                     ${photo.info ? `<span style="color: #00FFFF; font-size: 11px;">💡 ${photo.info}</span>` : ''}
                                 </div>
-                                <button class="delete-btn" onclick="deletePhoto('${photo.id}', '${photo.storagePath || ''}')" title="Smazat">×</button>
+                                <button class="delete-btn" onclick="deletePhoto('${photo.id}')" title="Smazat">×</button>
                             </div>
                         `;
                     });
@@ -379,7 +397,7 @@
 </head>
 <body>
 
-    <div id="loadingOverlay">Nahrávám do cloudu...</div>
+    <div id="loadingOverlay">Zpracovávám a ukládám do cloudu...</div>
 
     <h1>(Nejen) dopravní galerie</h1>
 
@@ -394,7 +412,7 @@
     <div class="modal" id="addModal">
         <div class="modal-content">
             <h3 style="margin: 0 0 5px 0;">Nová fotka</h3>
-            <label style="font-size: 12px; color: #aaa;">Vybrat fotku v plné kvalitě:</label>
+            <label style="font-size: 12px; color: #aaa;">Vybrat fotku:</label>
             <input type="file" id="imageInput" accept="image/*">
             
             <label style="font-size: 12px; color: #aaa;">Kategorie:</label>
