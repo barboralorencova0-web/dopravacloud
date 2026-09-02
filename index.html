@@ -186,13 +186,12 @@
         }
     </style>
 
-    <!-- Firebase SDK (pouze Firestore databáze, která je zdarma) -->
+    <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
-           const firebaseConfig = {
             apiKey: "AIzaSyCJb9o0ydoxgx4FeDeZKfw3is0_N_nMato",
             authDomain: "nejen-dopravni-galerie.firebaseapp.com",
             projectId: "nejen-dopravni-galerie",
@@ -233,7 +232,6 @@
             document.getElementById('viewerModal').style.display = 'none';
         }
 
-        // Pomocná funkce pro kompresi fotky v prohlížeči (zcela zdarma)
         function compressImage(file) {
             return new Promise((resolve) => {
                 const reader = new FileReader();
@@ -243,7 +241,7 @@
                         const canvas = document.createElement('canvas');
                         let width = img.width;
                         let height = img.height;
-                        const maxDim = 1200; // Maximální rozměr pro uložení do databáze
+                        const maxDim = 1200;
 
                         if (width > height && width > maxDim) {
                             height = Math.round((height * maxDim) / width);
@@ -257,7 +255,7 @@
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, width, height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.8)); // Převedení na zkomprimovaný Base64 text
+                        resolve(canvas.toDataURL('image/jpeg', 0.8));
                     };
                     img.src = e.target.result;
                 };
@@ -282,10 +280,8 @@
             document.getElementById('loadingOverlay').style.display = 'flex';
 
             try {
-                // Zmenšení fotky a převedení do textu přímo v prohlížeči
                 const compressedDataUrl = await compressImage(fileInput.files[0]);
 
-                // Uložení textových dat do Firestore databáze (zcela zdarma, bez Storage)
                 await addDoc(collection(db, "photos"), {
                     src: compressedDataUrl,
                     category: category,
@@ -378,12 +374,12 @@
 
         async function loadPhotos() {
             try {
-                const q = query(collection(db, "photos"), orderBy("createdAt", "desc"));
-                const querySnapshot = await getDocs(q);
+                const querySnapshot = await getDocs(collection(db, "photos"));
                 photos = [];
                 querySnapshot.forEach((docSnap) => {
                     photos.push({ id: docSnap.id, ...docSnap.data() });
                 });
+                photos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                 renderGallery();
             } catch (error) {
                 console.error("Chyba při načítání dat: ", error);
